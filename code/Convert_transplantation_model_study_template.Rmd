@@ -1,0 +1,596 @@
+---
+title: "Convert study template data and generate summary stats / plots"
+author: "Biao Li"
+date: "`r Sys.Date()`"
+header-includes: 
+ \usepackage{geometry}
+ \geometry{top=0.75in,left=0.6in,bottom=0.75in,right=0.6in}
+ \usepackage{titlesec}
+ \titleformat{\chapter}{\normalfont\LARGE\bfseries}{\thechapter}{1em}{}
+ \titlespacing*{\chapter}{0pt}{3.5ex plus 1ex minus .2ex}{2.3ex plus .2ex}
+output:
+  pdf_document: 
+    toc: true
+    number_sections: true
+  html_document:
+    code_folding: hide
+    toc: true
+  word_document: default
+documentclass: report
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+knitr::opts_chunk$set(echo=FALSE)
+```
+
+
+```{r pkg_}
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(tidyr)
+library(patchwork)
+library(readxl)
+library(plotrix)
+
+## read TV_measurements tab from ../data/
+dat_tv <- as.data.frame(read_excel("../data/in_vivo/MM_study5_data_example_revised_template.xlsm", sheet = "TV_measurements")) %>%
+  select(-Width_mm, -Length_mm) %>%
+  drop_na(Mouse_ID) %>%
+  select(Mouse_ID, Group, TV, Day)
+
+
+groups <- unique(dat_tv$Group)
+days <- sort(unique(dat_tv$Day))
+
+
+file_name <- "output.xlsx"
+sheet_name <- " Prism TV"
+
+# create workbook and add worksheet
+wb <- createWorkbook()
+addWorksheet(wb, sheet_name)
+
+list_df_grp <- list()
+n_rows <- c()
+n_cols <- c()
+
+row_to_start <- 2
+
+# for each group create its df
+for (idx in 1:length(groups)) {
+  
+  grp <- groups[idx]
+  df_grp <- dat_tv %>%
+    filter(Group == grp) %>%
+    select(-Group) %>%
+    pivot_wider(
+      names_from = Mouse_ID,
+      values_from = TV
+    )
+  
+  list_df_grp[[grp]] <- df_grp
+  n_rows <- c(n_rows, nrow(df_grp))
+  n_cols <- c(n_cols, ncol(df_grp))
+  
+  
+  # add datatable of each group
+  writeDataTable(wb, sheet = sheet_name, 
+                 x = df_grp, 
+                 startRow = row_to_start, 
+                 startCol = 1)
+  
+  
+  # add merged cell of group name
+  mergeCells(wb, sheet = sheet_name, cols = 1:n_cols[idx], rows = row_to_start - 1)
+  writeData(wb, sheet = sheet_name, x = grp, startCol = 1, startRow = row_to_start - 1)
+  
+  # update row_to_start for table of next group
+  row_to_start <- row_to_start + n_rows[idx] + 3 # +3 --> colname+1, space+1, groupname+1
+
+}
+
+
+# for all groups create one long table
+# add a header of "All Groups"
+writeData(wb, sheet = sheet_name, x = "All Groups", startCol = 1, startRow = row_to_start - 1)
+
+for (idx in 1:length(groups)) {
+  grp <- groups[idx]
+  
+  if (idx == 1) {
+    
+    col_to_start <- 2
+    
+    df_all <- list_df_grp[[grp]]
+    
+  } else {
+    
+    col_to_start <- col_to_start + n_cols[idx] - 1
+    
+    df_all <- df_all %>%
+      bind_cols(list_df_grp[[grp]][, 2:n_cols[idx]])
+  }
+  
+  # add merged cell of each group name
+  mergeCells(wb, sheet = sheet_name, cols = col_to_start:(col_to_start + n_cols[idx] - 2), rows = row_to_start - 1)
+  writeData(wb, sheet = sheet_name, x = grp, startCol = col_to_start, startRow = row_to_start - 1)
+  
+}
+
+# add datatable of all groups
+writeDataTable(wb, 
+               sheet = sheet_name, 
+               x = df_all, 
+               startRow = row_to_start, 
+               startCol = 1)
+
+
+## add TV summary tab to workbook
+sheet_name_tv_summary <- "TV Summary"
+addWorksheet(wb, sheet_name_tv_summary)
+
+# create header row 
+writeData(wb, sheet = sheet_name_tv_summary, x = t(as.data.frame(c("Group", "Mouse_ID", paste0("Day_", days)))), 
+          startCol = 1, startRow = 1, 
+          colNames = FALSE)
+
+# for each group output TV then followed by summary stat
+row_to_start <- 2
+
+for (idx in 1:length(groups)) {
+  grp <- groups[idx]
+  
+  df_grp <- dat_tv %>%
+    filter(Group == grp) %>%
+    select(-Group) %>%
+    pivot_wider(
+      names_from = Day,
+      values_from = TV
+  )
+  
+  # write TV table df_grp
+  writeDataTable(wb, sheet = sheet_name_tv_summary, 
+                 x = df_grp, 
+                 startRow = row_to_start, 
+                 startCol = 2)
+  
+  # write merged cell of Group info
+  mergeCells(wb, sheet = sheet_name_tv_summary,
+             cols = 1,
+             rows = row_to_start : (row_to_start + nrow(df_grp)))
+  writeData(wb, sheet = sheet_name_tv_summary, x = grp, startCol = 1, startRow = row_to_start)
+
+  row_to_start <- row_to_start + nrow(df_grp) + 6
+  
+  #   # add merged cell of each group name
+  # mergeCells(wb, sheet = sheet_name, cols = col_to_start:(col_to_start + n_cols[idx] - 2), rows = row_to_start - 1)
+  # writeData(wb, sheet = sheet_name, x = grp, startCol = col_to_start, startRow = row_to_start - 1)
+  
+  #   # add datatable of each group
+  # writeDataTable(wb, sheet = sheet_name, 
+  #                x = df_grp, 
+  #                startRow = row_to_start, 
+  #                startCol = 1)
+  # 
+  # 
+  # 
+  
+}
+
+## add n, mean, median, stddev and stderr to each group
+dat_stat <- dat_tv %>%
+  group_by(Group, Mouse_ID) %>%
+  summarise(
+    Mean = mean(TV, na.rm = TRUE),
+    Median = median(TV, na.rm = TRUE),
+    StdDev = sd(TV, na.rm = TRUE),
+    StdErr = std.error(TV, na.rm = TRUE), 
+    N = n()
+  ) 
+
+## save workbook
+saveWorkbook(wb, file = file_name, overwrite = TRUE)
+
+
+#####################
+# 
+# # add mean and sd to each group
+# dat_stat <- dat %>%
+#   group_by(Dox.condition, genotype, Day) %>%
+#   summarise(
+#     mean = mean(TV, na.rm = TRUE), 
+#     median = median(TV, na.rm = TRUE), 
+#     sd = sd(TV, na.rm = TRUE), 
+#     mad = mad(TV, na.rm = TRUE), 
+#     n = n()
+#   ) %>%
+#   mutate(factor = case_when(
+#     Dox.condition == "Dox" ~ paste0(genotype, " + dox"), 
+#     TRUE ~ paste0(genotype, " - dox")
+#   ))
+
+
+
+# dat <- read.csv("03-04-2024_CypAKD Model 5_KPCY_96 animals_COPY.csv", header = T) %>%
+#   mutate(Genotype = Injected_KPCY_cells_Genotypes) %>%
+#   mutate(Condition_Genotype_Operator = paste(Condition, Genotype, Operator, sep = "_")) %>%
+#   mutate(Condition_Operator = paste(Condition, Operator, sep = "_")) %>%
+#   mutate(Genotype_Operator = paste(Genotype, Operator, sep = "_")) %>%
+#   mutate(Genotype_Condition = paste(Genotype, Condition, sep = "_"))
+# 
+# dat_new <- read.csv("03-04 and 06-2024_CypAKD Model 5_KPCY_96 animals_flat.csv", header = T) %>%
+#   mutate(Genotype = Injected_KPCY_cells_Genotypes) %>%
+#   mutate(Operator = Pseudo_Operator) %>%
+#   mutate(Genotype_Operator = paste(Genotype, Pseudo_Operator, sep = "_")) %>%
+#   mutate(Genotype_Condition = paste(Genotype, Condition, sep = "_")) %>%
+#   mutate(Genotype_PseudoOperator = paste(Genotype, Pseudo_Operator, sep = "_"))
+```
+
+
+
+```{r test_revised_template, include=FALSE}
+library(lubridate)
+## add pseudo Date_treatment as 4/1/24 and pseudo (measurement)
+dat_tmp <- dat %>%
+  mutate(Date_treatment = format(mdy("04/01/2024"), "%m/%d/%y")) %>%
+  mutate(Date = format(mdy(Date_treatment) + days(Day), "%m/%d/%y")) %>%
+  mutate(Group = case_when(
+    Dox.condition == "Dox" ~ paste0(genotype, " + Dox"), 
+    .default = paste0(genotype, " - Dox")
+  )) %>%
+  mutate(Mouse_ID = Animal.ID) %>%
+  arrange(Date) %>%
+  select(Mouse_ID, Date, TV, Group, Day) 
+
+
+write.csv(file = "study5_tv_for_testing_revised_data_template.csv", dat_tmp)
+
+## list of Mouse IDs and their groups
+dat_tmp_ids <- dat_tmp %>%
+  distinct(Mouse_ID, .keep_all = TRUE) %>%
+  arrange(Group, Mouse_ID)
+
+write.csv(file = "study5_mouse_metadata_testing_revised_data_template.csv", dat_tmp_ids, row.names = F)
+  
+
+```
+
+
+# Plot - all original data
+```{r plot, fig.height = 8, fig.width = 6}
+pal <- c("darkgray", "darkgray", "#00B159", "#00B159", "#00AEDB", "#00AEDB")
+# ltype <- c("solid", "dashed", "solid", "dashed", "solid", "dashed")
+ltype <- rep(c("dashed", "solid"), 3)
+
+# ggplot(dat_stat, aes(Day, mean, group = factor, color = factor, linetype = factor)) +
+#   geom_line() + 
+#   geom_point(size = 2) + 
+#   geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), 
+#                 width = 4, 
+#                 position = position_dodge(0.5)) + 
+#   theme_classic() + 
+#   xlim(0, NA) + 
+#   scale_linetype_manual(values = ltype, name = "") + 
+#   scale_color_manual(values = pal, name = "") + 
+#   theme(legend.position = c(0.15, 0.8),
+#         legend.key.width = unit(0.5, "inch"), 
+#         axis.title.y = element_blank())
+
+
+width <- 0.5
+
+p <- ggplot(dat_stat, aes(Day, mean, group = factor, color = factor, linetype = factor)) +
+  geom_line() +
+  geom_segment(aes(
+    x = Day - width, xend = Day + width, 
+    y = mean - sd, yend = mean - sd 
+  ), 
+  size = 0.5, linetype = "solid") + 
+  geom_segment(aes(
+    x = Day - width, xend = Day + width, 
+    y = mean + sd, yend = mean + sd
+  ), 
+  size = 0.5, linetype = "solid") + 
+  geom_linerange(aes(
+    x = Day, 
+    ymin = (mean - sd), 
+    ymax = (mean + sd)
+  ), 
+  size = 0.5) + 
+  
+  geom_point(size = 2) + 
+  # geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), 
+  #               width = 4, 
+  #               position = position_dodge(0.5)) + 
+  theme_classic() + 
+  xlim(0, NA) + 
+  scale_linetype_manual(values = ltype, name = "") + 
+  scale_color_manual(values = pal, name = "") + 
+  theme(legend.position = c(0.35, 0.8),
+        legend.key.height = unit(0.5, "inch"), 
+        legend.key.width = unit(0.2, "inch"), 
+        axis.title.y = element_blank()) + 
+  guides(linetype = guide_legend(ncol = 3))
+
+p_facet <- p + 
+  facet_wrap(~ genotype) + 
+  theme(
+    legend.position = "none"
+  )
+
+
+p / p_facet
+
+
+
+```
+
+## summary stat - all original data {.tabset} 
+```{r summary_stat, results = "asis"}
+
+# table view of dat_stat
+
+# dat_stat_tbl <- dat_stat %>%
+#   mutate(txt = paste0(round(mean, 2), " (", round(sd, 2), ")\n", "n = ", n), .groups = "drop") %>%
+#   select(factor, Day, txt) %>%
+#   group_by(factor, Day) %>%
+#   pivot_wider(names_from = factor, values_from = txt)
+dat_stat_tbl <- dat_stat %>%
+  as_tibble() %>%
+  mutate(txt = paste0(round(mean, 2), " (", round(sd, 2), ") ", "n = ", n), .groups = "drop") %>%
+  select(factor, Day, txt) %>%
+  mutate(Day = paste0("Day ", Day)) %>%
+  pivot_wider(names_from = Day, values_from = txt)
+
+print(knitr::kable(dat_stat_tbl, format = "markdown"))
+
+```
+
+
+# Data profiling - proportion of TV > 0 {.tabset}
+
+```{r profiling, results = "asis"}
+days <- sort(unique(dat$Day))
+
+for (d in days) {
+  cat('\n##', paste0("Day ", d), "\n")
+  dat_d <- dat %>%
+    filter(Day == d) %>%
+    group_by(Dox.condition, genotype) %>%
+    summarize(percent_non_0 = round(mean(TV > 0, na.rm = TRUE), 3), .groups = 'drop') %>%
+    pivot_wider(names_from = genotype, values_from = percent_non_0)
+  print(knitr::kable(dat_d))
+  cat("\n")
+  
+}
+
+```
+
+# Plot - only mice of TV > 0 at day 19 (for each mouse normalizing TV to its day 19 measurement)
+
+```{r plot_mice_d19, fig.height = 8, fig.width = 6}
+selected_mice <- dat %>%
+  filter(Day == 19) %>%
+  filter(TV > 0) %>%
+  pull(Animal.ID) %>%
+  unique()
+
+# select only mice of non-0 TV at day 19 and only day 19 and onward
+dat_s <- dat %>%
+  filter(Day >= 19) %>%
+  filter(Animal.ID %in% selected_mice)
+
+# normalize TV to day 19 per each mouse
+dat_sn <- dat_s %>%
+  group_by(Animal.ID) %>%
+  mutate_at(5, funs(./first(.)))
+
+# stat of dat_sn
+dat_sn_stat <- dat_sn %>%
+  group_by(Dox.condition, genotype, Day) %>%
+  summarise(
+    mean = mean(TV, na.rm = TRUE), 
+    median = median(TV, na.rm = TRUE), 
+    sd = sd(TV, na.rm = TRUE), 
+    mad = mad(TV, na.rm = TRUE), 
+    n = n()
+  ) %>%
+  mutate(factor = case_when(
+    Dox.condition == "Dox" ~ paste0(genotype, " + dox"), 
+    TRUE ~ paste0(genotype, " - dox")
+  ))
+
+
+width <- 0.5
+
+p_sn <- ggplot(dat_sn_stat, aes(Day, mean, group = factor, color = factor, linetype = factor)) +
+  geom_line() +
+  geom_segment(aes(
+    x = Day - width, xend = Day + width, 
+    y = mean - sd, yend = mean - sd 
+  ), 
+  size = 0.5, linetype = "solid") + 
+  geom_segment(aes(
+    x = Day - width, xend = Day + width, 
+    y = mean + sd, yend = mean + sd
+  ), 
+  size = 0.5, linetype = "solid") + 
+  geom_linerange(aes(
+    x = Day, 
+    ymin = (mean - sd), 
+    ymax = (mean + sd)
+  ), 
+  size = 0.5) + 
+  
+  geom_point(size = 2) + 
+  # geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), 
+  #               width = 4, 
+  #               position = position_dodge(0.5)) + 
+  theme_classic() + 
+  xlim(0, NA) + 
+  scale_linetype_manual(values = ltype, name = "") + 
+  scale_color_manual(values = pal, name = "") + 
+  theme(legend.position = c(0.35, 0.8),
+        legend.key.height = unit(0.5, "inch"), 
+        legend.key.width = unit(0.2, "inch"), 
+        axis.title.y = element_blank()) + 
+  guides(linetype = guide_legend(ncol = 3))
+
+p_sn_facet <- p_sn + 
+  facet_wrap(~ genotype) + 
+  theme(
+    legend.position = "none"
+  ) + 
+  xlim(min(dat_sn_stat$Day), NA)
+
+p_sn / p_sn_facet
+
+
+```
+
+
+## summary stat - normalizing to day 19 {.tabset} 
+
+```{r summary_stat_sn, results = "asis"}
+
+dat_sn_stat_tbl <- dat_sn_stat %>%
+  as_tibble() %>%
+  mutate(txt = paste0(round(mean, 2), " (", round(sd, 2), ") ", "n = ", n), .groups = "drop") %>%
+  select(factor, Day, txt) %>%
+  mutate(Day = paste0("Day ", Day)) %>%
+  pivot_wider(names_from = Day, values_from = txt)
+  
+print(knitr::kable(dat_sn_stat_tbl, format = "markdown"))
+
+```
+
+# Plot - all mice but removing TV == 0 measurements (for each mouse normalizing TV to its first non-zero measurement)
+
+```{r plot_mice_nonzero, fig.height = 8, fig.width = 6}
+# selected_mice <- dat %>%
+#   filter(Day == 19) %>%
+#   filter(TV > 0) %>%
+#   pull(Animal.ID) %>%
+#   unique()
+
+# select only mice of non-0 TV 
+dat_s <- dat %>%
+  # filter(Day >= 19) %>%
+  filter(TV > 0)
+
+# normalize TV to day 19 per each mouse
+dat_sn <- dat_s %>%
+  group_by(Animal.ID) %>%
+  mutate_at(5, funs(./first(.)))
+
+# stat of dat_sn
+dat_sn_stat <- dat_sn %>%
+  group_by(Dox.condition, genotype, Day) %>%
+  summarise(
+    mean = mean(TV, na.rm = TRUE), 
+    median = median(TV, na.rm = TRUE), 
+    sd = sd(TV, na.rm = TRUE), 
+    mad = mad(TV, na.rm = TRUE), 
+    n = n()
+  ) %>%
+  mutate(factor = case_when(
+    Dox.condition == "Dox" ~ paste0(genotype, " + dox"), 
+    TRUE ~ paste0(genotype, " - dox")
+  ))
+
+
+width <- 0.5
+
+p_sn <- ggplot(dat_sn_stat, aes(Day, mean, group = factor, color = factor, linetype = factor)) +
+  geom_line() +
+  geom_segment(aes(
+    x = Day - width, xend = Day + width, 
+    y = mean - sd, yend = mean - sd 
+  ), 
+  size = 0.5, linetype = "solid") + 
+  geom_segment(aes(
+    x = Day - width, xend = Day + width, 
+    y = mean + sd, yend = mean + sd
+  ), 
+  size = 0.5, linetype = "solid") + 
+  geom_linerange(aes(
+    x = Day, 
+    ymin = (mean - sd), 
+    ymax = (mean + sd)
+  ), 
+  size = 0.5) + 
+  
+  geom_point(size = 2) + 
+  # geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), 
+  #               width = 4, 
+  #               position = position_dodge(0.5)) + 
+  theme_classic() + 
+  xlim(0, NA) + 
+  scale_linetype_manual(values = ltype, name = "") + 
+  scale_color_manual(values = pal, name = "") + 
+  theme(legend.position = c(0.35, 0.8),
+        legend.key.height = unit(0.5, "inch"), 
+        legend.key.width = unit(0.2, "inch"), 
+        axis.title.y = element_blank()) + 
+  guides(linetype = guide_legend(ncol = 3))
+
+p_sn_facet <- p_sn + 
+  facet_wrap(~ genotype) + 
+  theme(
+    legend.position = "none"
+  ) + 
+  xlim(min(dat_sn_stat$Day), NA)
+
+p_sn / p_sn_facet
+
+
+```
+
+## summary stat - normalizing TV of each mouse to its first non-zero measurement {.tabset} 
+
+```{r summary_stat_nonzero, results = "asis"}
+
+dat_sn_stat_tbl <- dat_sn_stat %>%
+  as_tibble() %>%
+  mutate(txt = paste0(round(mean, 2), " (", round(sd, 2), ") ", "n = ", n), .groups = "drop") %>%
+  select(factor, Day, txt) %>%
+  mutate(Day = paste0("Day ", Day)) %>%
+  pivot_wider(names_from = Day, values_from = txt)
+  
+print(knitr::kable(dat_sn_stat_tbl, format = "markdown"))
+
+```
+
+
+# Plot - TV of each mouse {.tabset}
+```{r plot_tv_each_mouse, fig.width = 6, fig.height = 8, results = "asis"}
+
+dat_plot <- dat %>%
+  mutate(factor = case_when(
+    Dox.condition == "Dox" ~ paste0(genotype, " + dox"), 
+    TRUE ~ paste0(genotype, " - dox")
+  ))
+
+factors <- unique(dat_plot$factor)
+
+for (f in factors) {
+  cat("\n##", f, "\n")
+  dat_f <- dat_plot %>%
+    filter(factor == f)
+  gg_f <- dat_f %>%
+    ggplot(aes(Day, TV, group = Animal.ID, label = round(TV, 0))) + 
+    theme_classic() + 
+    geom_point() + 
+    geom_line() + 
+    facet_wrap(~ Animal.ID, ncol = 4, scales = "free_y") + 
+    geom_text_repel()
+  print(gg_f)
+  cat("\n")
+  
+}
+
+```
+
